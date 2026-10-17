@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 
-import * as tf from '@tensorflow/tfjs';
+import '@tensorflow/tfjs';
 
 import * as cocoSsd from '@tensorflow-models/coco-ssd';
 
@@ -8,181 +8,231 @@ import * as cocoSsd from '@tensorflow-models/coco-ssd';
 
 function App() {
 
-  const videoRef = useRef(null);
+  const videoRef = useRef(null);
 
-  const canvasRef = useRef(null);
+  const canvasRef = useRef(null);
 
-  const [model, setModel] = useState(null);
+  const [model, setModel] = useState(null);
 
-  const [targetObject, setTargetObject] = useState(null);
+  const [targetObject, setTargetObject] = useState('');
 
 
 
-  useEffect(() => {
+  const targetRef = useRef('');
 
-    const loadModel = async () => {
+  const lastSpoken = useRef(0);
 
-      try {
 
-        const model = await cocoSsd.load();
 
-        setModel(model);
+  useEffect(() => {
 
-        console.log('Model loaded');
+    targetRef.current = targetObject;
 
-      } catch (error) {
+  }, [targetObject]);
 
-        console.error('Error loading model:', error);
 
-      }
 
-    };
+  useEffect(() => {
 
-    loadModel();
+    const loadModel = async () => {
 
-  }, []);
+      try {
 
+        const loaded = await cocoSsd.load();
 
+        setModel(loaded);
 
-  useEffect(() => {
+        console.log('Model loaded');
 
-    const startCamera = async () => {
+      } catch (error) {
 
-      try {
+        console.error('Error loading model:', error);
 
-        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
+      }
 
-        videoRef.current.srcObject = stream;
+    };
 
+    loadModel();
 
+  }, []);
 
-        videoRef.current.onplaying = () => {
 
-          videoRef.current.width = videoRef.current.videoWidth;
 
-          videoRef.current.height = videoRef.current.videoHeight;
+  useEffect(() => {
 
-        };
+    const startCamera = async () => {
 
-      } catch (error) {
+      try {
 
-        console.error('Error accessing camera:', error);
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true });
 
-      }
+        videoRef.current.srcObject = stream;
 
-    };
+      } catch (error) {
 
+        console.error('Error accessing camera:', error);
 
+      }
 
-    if (videoRef.current) {
+    };
 
-      startCamera();
+    if (videoRef.current) {
 
-    }
+      startCamera();
 
-  }, []);
+    }
 
+  }, []);
 
 
-  useEffect(() => {
 
-    const detectObjects = async () => {
+  const announce = (prediction, frameWidth) => {
 
-      if (model && videoRef.current && canvasRef.current) {
+    const now = Date.now();
 
-        const ctx = canvasRef.current.getContext('2d');
+    if (now - lastSpoken.current < 3000) return;
 
-        const videoWidth = videoRef.current.videoWidth;
 
-        const videoHeight = videoRef.current.videoHeight;
 
+    const [x, , width] = prediction.bbox;
 
+    const center = x + width / 2;
 
-        canvasRef.current.width = videoWidth;
+    const side = center < frameWidth / 3 ? 'on your left'
 
-        canvasRef.current.height = videoHeight;
+               : center > (2 * frameWidth) / 3 ? 'on your right'
 
+               : 'straight ahead';
 
 
-        const predictions = await model.detect(videoRef.current);
 
+    window.speechSynthesis.speak(
 
+      new SpeechSynthesisUtterance(`${prediction.class}, ${side}`)
 
-        ctx.clearRect(0, 0, videoWidth, videoHeight);
+    );
 
-        ctx.drawImage(videoRef.current, 0, 0, videoWidth, videoHeight);
+    lastSpoken.current = now;
 
+  };
 
 
-        predictions.forEach((prediction) => {
 
-          ctx.beginPath();
+  useEffect(() => {
 
-          ctx.rect(...prediction.bbox);
+    if (!model) return;
 
-          ctx.lineWidth = 2;
+    let frameId;
 
-          ctx.strokeStyle = 'green';
 
-          ctx.fillStyle = 'green';
 
-          ctx.stroke();
+    const detectObjects = async () => {
 
-          ctx.fillText(
+      const video = videoRef.current;
 
-            `${prediction.class} - ${Math.round(prediction.score * 100)}%`,
+      const canvas = canvasRef.current;
 
-            prediction.bbox[0],
 
-            prediction.bbox[1] > 10 ? prediction.bbox[1] - 5 : 10
 
-          );
+      if (video && canvas && video.readyState === 4) {
 
+        const ctx = canvas.getContext('2d');
 
+        const w = video.videoWidth;
 
-          if (targetObject && prediction.class.toLowerCase() === targetObject) {
+        const h = video.videoHeight;
 
-            console.log('Target object found:', prediction.class);
+        canvas.width = w;
 
-            const audio = new Audio('target_object_found.mp3'); 
+        canvas.height = h;
 
-            audio.play();
 
-          }
 
-        });
+        const predictions = await model.detect(video);
 
 
 
-        requestAnimationFrame(detectObjects);
+        ctx.clearRect(0, 0, w, h);
 
-      }
+        ctx.drawImage(video, 0, 0, w, h);
 
-    };
 
 
+        predictions.forEach((prediction) => {
 
-    if (model) {
+          ctx.beginPath();
 
-      detectObjects();
+          ctx.rect(...prediction.bbox);
 
-    }
+          ctx.lineWidth = 2;
 
-  }, [model, targetObject]);
+          ctx.strokeStyle = 'green';
 
+          ctx.fillStyle = 'green';
 
+          ctx.stroke();
 
-  return (
+          ctx.fillText(
 
-    <div>
+            `${prediction.class} - ${Math.round(prediction.score * 100)}%`,
 
-      <video ref={videoRef} autoPlay playsInline muted />
+            prediction.bbox[0],
 
-      <canvas ref={canvasRef} />
+            prediction.bbox[1] > 10 ? prediction.bbox[1] - 5 : 10
 
-    </div>
+          );
 
-  );
+
+
+          const target = targetRef.current;
+
+          if (target && prediction.class.toLowerCase() === target) {
+
+            announce(prediction, w);
+
+          }
+
+        });
+
+      }
+
+
+
+      frameId = requestAnimationFrame(detectObjects);
+
+    };
+
+
+
+    detectObjects();
+
+    return () => cancelAnimationFrame(frameId);
+
+  }, [model]);
+
+
+
+  return (
+
+    <div>
+
+      <input
+
+        placeholder="What are you looking for? (e.g. cup, bottle, chair)"
+
+        value={targetObject}
+
+        onChange={(e) => setTargetObject(e.target.value.trim().toLowerCase())}
+
+      />
+
+      <video ref={videoRef} autoPlay playsInline muted style={{ display: 'none' }} />
+
+      <canvas ref={canvasRef} />
+
+    </div>
+
+  );
 
 }
 
